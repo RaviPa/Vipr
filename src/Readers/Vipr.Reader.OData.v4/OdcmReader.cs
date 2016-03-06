@@ -318,72 +318,84 @@ namespace Vipr.Reader.OData.v4
                     }
                 }
 
-                foreach (var entityType in entityTypes)
+                int entitiesProcessed = 0;
+                int totalNumberOfEntitiesInHierarchy = entityTypes.Count();
+                int level = 0;
+                while (entitiesProcessed < totalNumberOfEntitiesInHierarchy)
                 {
-                    OdcmEntityClass odcmClass;
-                    if (!_odcmModel.TryResolveType(entityType.Name, entityType.Namespace, out odcmClass))
+                    foreach (var entityType in entityTypes)
                     {
-                        throw new InvalidOperationException();
-                    }
-
-                    odcmClass.IsAbstract = entityType.IsAbstract;
-                    odcmClass.IsOpen = entityType.IsOpen;
-                    AddVocabularyAnnotations(odcmClass, entityType);
-
-                    if (entityType.BaseType != null)
-                    {
-                        var baseType = (IEdmSchemaElement)entityType.BaseType;
-
-                        OdcmClass baseClass;
-                        if (!_odcmModel.TryResolveType(baseType.Name, baseType.Namespace, out baseClass))
+                        if (getLevelOfEntityInEntityHierarchy(entityType) != level)
+                        {
+                            continue;
+                        }
+                        entitiesProcessed = entitiesProcessed + 1;
+                        OdcmEntityClass odcmClass;
+                        if (!_odcmModel.TryResolveType(entityType.Name, entityType.Namespace, out odcmClass))
                         {
                             throw new InvalidOperationException();
                         }
 
-                        odcmClass.Base = baseClass;
+                        odcmClass.IsAbstract = entityType.IsAbstract;
+                        odcmClass.IsOpen = entityType.IsOpen;
+                        AddVocabularyAnnotations(odcmClass, entityType);
 
-                        if (!baseClass.Derived.Contains(odcmClass))
+                        if (entityType.BaseType != null)
                         {
-                            baseClass.Derived.Add(odcmClass);
+                            var baseType = (IEdmSchemaElement)entityType.BaseType;
+
+                            OdcmClass baseClass;
+                            if (!_odcmModel.TryResolveType(baseType.Name, baseType.Namespace, out baseClass))
+                            {
+                                throw new InvalidOperationException();
+                            }
+
+                            odcmClass.Base = baseClass;
+
+                            if (!baseClass.Derived.Contains(odcmClass))
+                            {
+                                baseClass.Derived.Add(odcmClass);
+                            }
+                        }
+
+                        foreach (var property in entityType.DeclaredProperties)
+                        {
+                            WriteProperty(odcmClass, property);
+                        }
+
+                        foreach (IEdmStructuralProperty keyProperty in entityType.Key())
+                        {
+                            OdcmProperty property;
+                            if (!odcmClass.TryFindProperty(keyProperty.Name, out property))
+                            {
+                                throw new InvalidOperationException();
+                            }
+
+                            if (property.IsNullable)
+                            {
+                                //TODO: need to create a warning...
+                            }
+
+                            odcmClass.Key.Add(property);
+                        }
+
+                        var entityTypeActions = from element in actions
+                                                where IsOperationBoundTo(element, entityType)
+                                                select element;
+                        foreach (var action in entityTypeActions)
+                        {
+                            WriteMethod(odcmClass, action);
+                        }
+
+                        var entityTypeFunctions = from element in functions
+                                                  where IsOperationBoundTo(element, entityType)
+                                                  select element;
+                        foreach (var function in entityTypeFunctions)
+                        {
+                            WriteMethod(odcmClass, function);
                         }
                     }
-
-                    foreach (var property in entityType.DeclaredProperties)
-                    {
-                        WriteProperty(odcmClass, property);
-                    }
-
-                    foreach (IEdmStructuralProperty keyProperty in entityType.Key())
-                    {
-                        OdcmProperty property;
-                        if (!odcmClass.TryFindProperty(keyProperty.Name, out property))
-                        {
-                            throw new InvalidOperationException();
-                        }
-
-                        if (property.IsNullable)
-                        {
-                            //TODO: need to create a warning...
-                        }
-                        
-                        odcmClass.Key.Add(property);
-                    }
-
-                    var entityTypeActions = from element in actions
-                                            where IsOperationBoundTo(element, entityType)
-                                            select element;
-                    foreach (var action in entityTypeActions)
-                    {
-                        WriteMethod(odcmClass, action);
-                    }
-
-                    var entityTypeFunctions = from element in functions
-                                              where IsOperationBoundTo(element, entityType)
-                                              select element;
-                    foreach (var function in entityTypeFunctions)
-                    {
-                        WriteMethod(odcmClass, function);
-                    }
+                    level = level + 1; ;
                 }
 
                 foreach (var entityContainer in entityContainers)
@@ -607,6 +619,18 @@ namespace Vipr.Reader.OData.v4
                 }
 
                 return odcmNamespace;
+            }
+
+            private int getLevelOfEntityInEntityHierarchy(IEdmEntityType entity)
+            {
+                int level = 0;
+                IEdmEntityType tempEntity = entity;
+                while (tempEntity !=null && tempEntity.BaseType != null)
+                {
+                    tempEntity = (IEdmEntityType)tempEntity.BaseType;
+                    level++;
+                }
+                return level;
             }
         }
     }
